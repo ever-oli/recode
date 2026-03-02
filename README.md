@@ -12,6 +12,7 @@ A terminal-based spaced repetition tool for practicing any code from memory. Wri
 - **Side-by-side diff** — your attempt vs. the reference solution, line by line
 - **AI hints** — Socratic nudges that guide you without just giving away the answer
 - **AI suggest fix** — targeted bullet-point suggestions when you want more direct feedback
+- **OpenCode chat modal** — conversational help in-context while you study a problem
 - **158 themes** — full terminal.sexy palette, switchable live from the command palette
 - **Extensible** — add any problem by dropping a `.py` file into `problems/`
 
@@ -36,6 +37,7 @@ A terminal-based spaced repetition tool for practicing any code from memory. Wri
 - Python 3.10+
 - [`uv`](https://github.com/astral-sh/uv) (recommended) or `pip`
 - A Gemini or OpenRouter API key
+- [OpenCode CLI](https://opencode.ai/) on your PATH for in-app chat (auto-started by Codi)
 
 ---
 
@@ -63,6 +65,12 @@ EDITOR=nvim
 
 # Optional: override the problems directory
 # PROBLEMS_DIR=/path/to/your/problems
+
+# Optional: OpenCode server URL for in-app chat modal
+# OPENCODE_SERVER_URL=http://127.0.0.1:4096
+
+# Optional: disable automatic `opencode serve` on first chat request
+# OPENCODE_AUTOSTART=0
 ```
 
 **3. Install dependencies and run**
@@ -80,6 +88,19 @@ pip install -r requirements.txt
 python app.py
 ```
 
+**4. Chat modal behavior (OpenCode)**
+
+By default, pressing `c` in a problem will auto-start a local OpenCode server if it is not already running.
+The chat modal shows a live status line (`connected`, `auto-started OpenCode`, or `offline`).
+In chat, type `/health` to print OpenCode connection diagnostics.
+Use `/help` for chat commands and `/clear` to clear chat history in the modal.
+
+If you prefer running it yourself (or disabled auto-start), start it manually:
+
+```bash
+opencode serve --port 4096
+```
+
 ---
 
 ## Usage
@@ -87,6 +108,7 @@ python app.py
 | Key | Action |
 |-----|--------|
 | `Enter` | Open the selected problem in your editor, then review |
+| `c` | Open in-problem chat modal (OpenCode-backed) |
 | `r` | Refresh the problem list |
 | `Ctrl+P` | Open the command palette (theme switcher, etc.) |
 | `q` / `Ctrl+C` | Quit |

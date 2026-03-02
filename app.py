@@ -21,9 +21,9 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
-from ai import get_explain, get_hint, get_suggest_fix
+from ai import get_explain, get_hint, get_suggest_fix, opencode_chat, opencode_chat_health
 from db import get_db, get_row, get_streak, reset_progress, sm2_update
-from modals import AIModal, ConfirmModal, RatingModal, CollectionSelectModal
+from modals import AIModal, ChatModal, ConfirmModal, RatingModal, CollectionSelectModal
 from problems_utils import (
     build_side_by_side,
     get_problem_id,
@@ -53,6 +53,7 @@ class StudyScreen(Screen):
         Binding("s", "submit",      "Submit"),
         Binding("h", "hint",        "Hint"),
         Binding("f", "suggest_fix", "Fix"),
+        Binding("c", "chat",        "Chat"),
         Binding("x", "explain",     "Explain"),
         Binding("q", "back",        "Menu"),
     ]
@@ -69,6 +70,7 @@ class StudyScreen(Screen):
         self.conn      = get_db(DB_PATH)
         self.attempts  = 0
         self.has_diff  = False
+        self.chat_session_id: str | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -117,6 +119,25 @@ class StudyScreen(Screen):
             lambda: get_explain(self.problem.name, ref),
         ))
 
+    def action_chat(self) -> None:
+        ref = self.meta["solution"]
+
+        def _send(msg: str) -> tuple[str, str]:
+            if msg.strip() == "/health":
+                return opencode_chat_health()
+            user = self.work_file.read_text() if self.work_file.exists() else ""
+            reply, sid, status = opencode_chat(
+                self.problem.name,
+                ref,
+                user,
+                msg,
+                self.chat_session_id,
+            )
+            self.chat_session_id = sid or self.chat_session_id
+            return (reply, status)
+
+        self.app.push_screen(ChatModal(f"chat  ·  {self.problem.name}", _send))
+
     def action_edit(self) -> None:
         self.attempts += 1
         if not self.work_file.exists():
@@ -148,7 +169,7 @@ class StudyScreen(Screen):
         else:
             log.write(
                 f"\n[dim]attempt {self.attempts}  ·  max: {RATING_LABELS[max_r]}"
-                f"  ·  s = submit    e = retry    x = explain[/]"
+                f"  ·  s = submit    e = retry    h = hint    f = fix    c = chat    x = explain[/]"
             )
 
         self.conn.execute(
@@ -405,6 +426,43 @@ class MLStudyApp(App):
         border: solid $accent;
     }
     CollectionSelectModal { align: center middle; background: $background 70%; }
+
+    #chat-box {
+        background: $surface;
+        border: double $primary;
+        padding: 1 2;
+        width: 92%;
+        height: 82%;
+        align: center middle;
+    }
+    #chat-header {
+        height: 1;
+        margin-bottom: 1;
+    }
+    #chat-title {
+        width: 1fr;
+        text-style: bold;
+    }
+    #chat-status {
+        width: auto;
+        content-align: right middle;
+    }
+    #chat-log {
+        height: 1fr;
+        border: round $primary;
+        background: $background;
+        padding: 1;
+        margin-bottom: 1;
+    }
+    #chat-input {
+        dock: bottom;
+        margin-bottom: 1;
+    }
+    #chat-help {
+        height: 1;
+        color: $accent;
+    }
+    ChatModal   { align: center middle; background: $background 70%; }
     """
 
     def on_mount(self) -> None:
