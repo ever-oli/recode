@@ -22,7 +22,7 @@ from textual.screen import Screen
 from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
 from ai import get_explain, get_hint, get_suggest_fix, opencode_chat, opencode_chat_health
-from db import get_db, get_row, get_streak, reset_progress, sm2_update
+from db import get_db, get_row, get_streak, log_mistake, recent_mistakes, reset_progress, sm2_update
 from modals import AIModal, ChatModal, ConfirmModal, RatingModal, CollectionSelectModal
 from problems_utils import (
     build_side_by_side,
@@ -136,7 +136,49 @@ class StudyScreen(Screen):
             self.chat_session_id = sid or self.chat_session_id
             return (reply, status)
 
-        self.app.push_screen(ChatModal(f"chat  ·  {self.problem.name}", _send))
+        self.app.push_screen(
+            ChatModal(
+                f"chat  ·  {self.problem.name}",
+                _send,
+                context_fn=self._chat_context_line,
+                mistakes_fn=self._chat_recent_mistakes,
+                diff_fn=self._chat_diff_preview,
+                open_hint_fn=self.action_hint,
+                open_fix_fn=self.action_suggest_fix,
+            )
+        )
+
+    def _chat_context_line(self) -> str:
+        row = get_row(self.conn, self.pid)
+        last_rating = RATING_LABELS.get(row["last_rating"], "—") if row and row["last_rating"] else "—"
+        draft_state = "present" if self.work_file.exists() else "empty"
+        diff_state = "ready" if self.has_diff else "none"
+        return (
+            f"[dim]context: attempts {self.attempts} | last rating {last_rating} | "
+            f"draft {draft_state} | diff {diff_state}[/]"
+        )
+
+    def _chat_recent_mistakes(self) -> list[str]:
+        return recent_mistakes(self.conn, self.pid, limit=2)
+
+    def _chat_diff_preview(self) -> str:
+        if not self.has_diff and not self.work_file.exists():
+            return ""
+        user_code = self.work_file.read_text() if self.work_file.exists() else ""
+        ref_code = self.meta["solution"]
+        raw = "\n".join(
+            difflib.unified_diff(
+                ref_code.splitlines(),
+                user_code.splitlines(),
+                fromfile="reference",
+                tofile="yours",
+                lineterm="",
+            )
+        )
+        lines = raw.splitlines()
+        if not lines:
+            return "No diff: your draft currently matches the reference."
+        return "\n".join(lines[:48])
 
     def action_edit(self) -> None:
         self.attempts += 1
@@ -162,6 +204,9 @@ class StudyScreen(Screen):
                 ref_code.splitlines(), user_code.splitlines(),
                 fromfile="reference", tofile="yours", lineterm="",
             ))
+            small_summary = "\n".join(summary.splitlines()[:16]).strip()
+            if small_summary:
+                log_mistake(self.conn, self.pid, small_summary)
 
         max_r = max_rating_for(self.attempts)
         if self.attempts >= 4:
@@ -244,6 +289,7 @@ class MenuScreen(Screen):
         super().__init__()
         self.conn        = get_db(DB_PATH)
         self._all_rows: list[tuple] = []
+        self._visible_paths: list[Path] = []
         self._filter     = ""
         self.current_collection = PROBLEMS_DIR
 
@@ -305,10 +351,12 @@ class MenuScreen(Screen):
     def _render_table(self) -> None:
         t = self.query_one(DataTable)
         t.clear()
+        self._visible_paths = []
         q = self._filter.lower()
         for _, label, color, p, reps, interval, nxt in self._all_rows:
             if q and q not in p.name.lower():
                 continue
+            self._visible_paths.append(p)
             t.add_row(
                 f"[{color}]{label}[/]", p.name, reps, interval, nxt,
                 key=str(p),
@@ -359,8 +407,9 @@ class MenuScreen(Screen):
         t = self.query_one(DataTable)
         if t.cursor_row is None:
             return
-        row_key = t.get_row_at(t.cursor_row)
-        p_path = Path(str(row_key.value))
+        if t.cursor_row < 0 or t.cursor_row >= len(self._visible_paths):
+            return
+        p_path = self._visible_paths[t.cursor_row]
         pid = get_problem_id(p_path, PROBLEMS_DIR)
         self.app.push_screen(
             ConfirmModal(f"Reset progress for  {p_path.name}?"),
@@ -447,13 +496,29 @@ class MLStudyApp(App):
         width: auto;
         content-align: right middle;
     }
-    #chat-log {
+    #chat-context {
+        height: 1;
+        margin-bottom: 1;
+    }
+    #chat-main {
         height: 1fr;
+        margin-bottom: 1;
+    }
+    #chat-log {
+        width: 2fr;
         border: round $primary;
         background: $background;
         padding: 1;
-        margin-bottom: 1;
     }
+    #chat-diff {
+        width: 1fr;
+        border: round $accent;
+        background: $surface;
+        padding: 1;
+        margin-left: 1;
+        overflow-y: auto;
+    }
+    .hidden { display: none; }
     #chat-input {
         dock: bottom;
         margin-bottom: 1;

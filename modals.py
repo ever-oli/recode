@@ -6,6 +6,7 @@ from __future__ import annotations
 import threading
 from pathlib import Path
 from datetime import datetime
+from typing import Callable
 
 from rich.panel import Panel
 from rich.markup import escape
@@ -13,7 +14,7 @@ from rich.text import Text
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
-from textual.widgets import Input, Label, ListItem, ListView, Markdown as MarkdownWidget, RichLog
+from textual.widgets import Input, Label, ListItem, ListView, Markdown as MarkdownWidget, RichLog, Static
 
 RATING_LABELS = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
 RATING_DESC   = {
@@ -59,25 +60,51 @@ class ChatModal(ModalScreen):
         Binding("escape,q", "dismiss", "Close"),
         Binding("ctrl+l", "clear_chat", "Clear"),
         Binding("ctrl+k", "focus_input", "Focus input"),
+        Binding("ctrl+d", "toggle_split", "Split"),
     ]
 
-    def __init__(self, title: str, send_fn) -> None:
+    def __init__(
+        self,
+        title: str,
+        send_fn: Callable[[str], tuple[str, str] | str],
+        context_fn: Callable[[], str] | None = None,
+        mistakes_fn: Callable[[], list[str]] | None = None,
+        diff_fn: Callable[[], str] | None = None,
+        open_hint_fn: Callable[[], None] | None = None,
+        open_fix_fn: Callable[[], None] | None = None,
+    ) -> None:
         super().__init__()
         self._title = title
         self._send_fn = send_fn
+        self._context_fn = context_fn
+        self._mistakes_fn = mistakes_fn
+        self._diff_fn = diff_fn
+        self._open_hint_fn = open_hint_fn
+        self._open_fix_fn = open_fix_fn
         self._busy = False
+        self._split = False
+        self._todos: list[dict[str, str | bool]] = []
 
     def compose(self):
         with Vertical(id="chat-box"):
             with Horizontal(id="chat-header"):
                 yield Label(f"[bold]{escape(self._title)}[/]", id="chat-title")
                 yield Label("[dim]status: ready[/]", id="chat-status")
-            yield RichLog(id="chat-log", markup=True, highlight=False, wrap=True, auto_scroll=True)
+            yield Label("[dim]context: loading...[/]", id="chat-context")
+            with Horizontal(id="chat-main"):
+                yield RichLog(id="chat-log", markup=True, highlight=False, wrap=True, auto_scroll=True)
+                yield Static("", id="chat-diff", classes="hidden")
             yield Input(placeholder="Ask Codi chat...", id="chat-input")
-            yield Label("[dim]Enter send  |  /health diagnostics  |  /help commands  |  /clear chat[/]", id="chat-help")
+            yield Label("[dim]Enter send | /nudge /explain-gap /test-me /checklist | /hint /fix | /todo ... | /split[/]", id="chat-help")
 
     def on_mount(self) -> None:
+        self._refresh_context()
         self._append_system("Codi chat is ready. Ask about this problem, your diff, or the concept.")
+        mistakes = self._mistakes_fn() if self._mistakes_fn else []
+        if mistakes:
+            self._append_system("Recent mistakes:")
+            for idx, item in enumerate(mistakes, start=1):
+                self._append_system(f"  {idx}. {item}")
         self.query_one("#chat-input", Input).focus()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
@@ -91,8 +118,42 @@ class ChatModal(ModalScreen):
             self.action_clear_chat()
             return
         if lowered == "/help":
-            self._append_system("/health shows OpenCode connectivity, /clear clears this chat log, /help shows commands.")
+            self._append_system("/health diagnostics | /hint open hint modal | /fix open suggest-fix modal")
+            self._append_system("/todo add <text> | /todo | /todo done <n> | /split toggles chat/diff split")
             return
+        if lowered == "/hint":
+            if self._open_hint_fn:
+                self._open_hint_fn()
+                self._append_system("Opened Hint modal.")
+            else:
+                self._append_system("Hint action is unavailable in this context.")
+            return
+        if lowered == "/fix":
+            if self._open_fix_fn:
+                self._open_fix_fn()
+                self._append_system("Opened Suggest Fix modal.")
+            else:
+                self._append_system("Suggest Fix action is unavailable in this context.")
+            return
+        if lowered == "/split":
+            self.action_toggle_split()
+            return
+        if lowered == "/diff":
+            self._show_diff_preview()
+            return
+        if lowered.startswith("/todo"):
+            self._handle_todo(text)
+            return
+
+        presets = {
+            "/nudge": "Give me one concise Socratic nudge based on my current attempt and do not reveal the answer.",
+            "/explain-gap": "Explain the single most important gap in my current attempt in 3 short bullet points.",
+            "/test-me": "Quiz me with 3 short questions about this problem, one at a time, and wait after each one.",
+            "/checklist": "Give me a short implementation checklist I can follow before I submit.",
+        }
+        if lowered in presets:
+            text = presets[lowered]
+            self._append_system(f"preset: {lowered}")
 
         self._append_message("you", text)
         self._set_status("thinking")
@@ -107,6 +168,16 @@ class ChatModal(ModalScreen):
 
     def action_focus_input(self) -> None:
         self.query_one("#chat-input", Input).focus()
+
+    def action_toggle_split(self) -> None:
+        self._split = not self._split
+        pane = self.query_one("#chat-diff", Static)
+        if self._split:
+            pane.remove_class("hidden")
+            self._show_diff_preview()
+        else:
+            pane.add_class("hidden")
+            pane.update("")
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
@@ -136,6 +207,7 @@ class ChatModal(ModalScreen):
         self._append_message("codi", text)
         self._set_status(status)
         self._set_busy(False)
+        self._refresh_context()
 
     def _append_system(self, text: str) -> None:
         self.query_one("#chat-log", RichLog).write(f"[dim]{escape(text)}[/]")
@@ -171,6 +243,57 @@ class ChatModal(ModalScreen):
         else:
             label = f"[dim]status: {escape(status)}[/]"
         self.query_one("#chat-status", Label).update(label)
+
+    def _refresh_context(self) -> None:
+        if not self._context_fn:
+            return
+        self.query_one("#chat-context", Label).update(self._context_fn())
+
+    def _show_diff_preview(self) -> None:
+        if not self._diff_fn:
+            self._append_system("No diff preview callback is available.")
+            return
+        text = self._diff_fn().strip()
+        if not text:
+            text = "No diff available yet. Edit and save first."
+        self.query_one("#chat-diff", Static).update(text)
+        if not self._split:
+            self._append_system("Use /split (or Ctrl+D) to show diff beside chat.")
+
+    def _handle_todo(self, command: str) -> None:
+        parts = command.split(maxsplit=2)
+        if len(parts) == 1:
+            if not self._todos:
+                self._append_system("TODO list is empty. Add one with /todo add <task>.")
+                return
+            self._append_system("TODO list:")
+            for idx, item in enumerate(self._todos, start=1):
+                mark = "x" if item["done"] else " "
+                self._append_system(f"  {idx}. [{mark}] {item['text']}")
+            return
+
+        action = parts[1].lower()
+        if action == "add":
+            if len(parts) < 3 or not parts[2].strip():
+                self._append_system("Usage: /todo add <task>")
+                return
+            self._todos.append({"text": parts[2].strip(), "done": False})
+            self._append_system(f"Added TODO #{len(self._todos)}.")
+            return
+
+        if action == "done":
+            if len(parts) < 3 or not parts[2].strip().isdigit():
+                self._append_system("Usage: /todo done <number>")
+                return
+            idx = int(parts[2].strip()) - 1
+            if idx < 0 or idx >= len(self._todos):
+                self._append_system("TODO number out of range.")
+                return
+            self._todos[idx]["done"] = True
+            self._append_system(f"Marked TODO #{idx + 1} done.")
+            return
+
+        self._append_system("Unknown /todo command. Use /todo, /todo add <task>, /todo done <n>.")
 
 
 class ConfirmModal(ModalScreen[bool]):
@@ -282,5 +405,7 @@ class CollectionSelectModal(ModalScreen[Path]):
             return path.name
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.item is None or event.item.id is None:
+            return
         idx = int(event.item.id.split("-")[1])
         self.dismiss(self.collections[idx])

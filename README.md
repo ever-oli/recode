@@ -13,6 +13,7 @@ A terminal-based spaced repetition tool for practicing any code from memory. Wri
 - **AI hints** — Socratic nudges that guide you without just giving away the answer
 - **AI suggest fix** — targeted bullet-point suggestions when you want more direct feedback
 - **OpenCode chat modal** — conversational help in-context while you study a problem
+- **Agent-like chat tools** — presets (`/nudge`, `/test-me`), TODO capture, diff split view, and `/health`
 - **158 themes** — full terminal.sexy palette, switchable live from the command palette
 - **Extensible** — add any problem by dropping a `.py` file into `problems/`
 
@@ -94,6 +95,7 @@ By default, pressing `c` in a problem will auto-start a local OpenCode server if
 The chat modal shows a live status line (`connected`, `auto-started OpenCode`, or `offline`).
 In chat, type `/health` to print OpenCode connection diagnostics.
 Use `/help` for chat commands and `/clear` to clear chat history in the modal.
+Chat also supports `/hint`, `/fix`, `/todo ...`, preset prompts, and `/split` (or `Ctrl+D`) to show diff + chat side by side.
 
 If you prefer running it yourself (or disabled auto-start), start it manually:
 
@@ -128,6 +130,7 @@ opencode serve --port 4096
 ## Adding Problems
 
 Problems are plain `.py` files. Drop any `.py` file into the `problems/` folder and it will appear in the list on the next refresh (`r`).
+`TensorPoly` is now vendored as a normal folder inside `problems/` (not a submodule), and can be selected with collection switch (`c`) in the menu.
 
 A problem file contains two things:
 

@@ -27,6 +27,18 @@ def get_db(db_path: Path) -> sqlite3.Connection:
             day TEXT PRIMARY KEY
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS mistakes (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            problem_id TEXT NOT NULL,
+            summary    TEXT NOT NULL,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    """)
+
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(reviews)").fetchall()}
+    if "last_rating" not in cols:
+        conn.execute("ALTER TABLE reviews ADD COLUMN last_rating INTEGER")
     conn.commit()
     return conn
 
@@ -52,14 +64,15 @@ def sm2_update(conn: sqlite3.Connection, pid: str, rating: int) -> None:
 
     next_rev = (datetime.now() + timedelta(days=iv)).isoformat()
     conn.execute("""
-        INSERT INTO reviews (problem_id, interval, easiness, reps, next_review)
-        VALUES (?,?,?,?,?)
+        INSERT INTO reviews (problem_id, interval, easiness, reps, next_review, last_rating)
+        VALUES (?,?,?,?,?,?)
         ON CONFLICT(problem_id) DO UPDATE SET
             interval=excluded.interval,
             easiness=excluded.easiness,
             reps=excluded.reps,
-            next_review=excluded.next_review
-    """, (pid, iv, ef, reps, next_rev))
+            next_review=excluded.next_review,
+            last_rating=excluded.last_rating
+    """, (pid, iv, ef, reps, next_rev, rating))
     conn.execute(
         "INSERT OR IGNORE INTO activity (day) VALUES (?)",
         (datetime.now().date().isoformat(),),
@@ -92,4 +105,24 @@ def get_streak(conn: sqlite3.Connection) -> int:
 
 def reset_progress(conn: sqlite3.Connection, pid: str) -> None:
     conn.execute("DELETE FROM reviews WHERE problem_id=?", (pid,))
+    conn.execute("DELETE FROM mistakes WHERE problem_id=?", (pid,))
     conn.commit()
+
+
+def log_mistake(conn: sqlite3.Connection, pid: str, summary: str) -> None:
+    text = summary.strip()
+    if not text:
+        return
+    conn.execute(
+        "INSERT INTO mistakes (problem_id, summary) VALUES (?, ?)",
+        (pid, text),
+    )
+    conn.commit()
+
+
+def recent_mistakes(conn: sqlite3.Connection, pid: str, limit: int = 2) -> list[str]:
+    rows = conn.execute(
+        "SELECT summary FROM mistakes WHERE problem_id=? ORDER BY id DESC LIMIT ?",
+        (pid, limit),
+    ).fetchall()
+    return [str(row["summary"]) for row in rows]
