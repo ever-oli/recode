@@ -10,6 +10,7 @@ from typing import Callable
 
 from rich.panel import Panel
 from rich.markup import escape
+from rich.syntax import Syntax
 from rich.text import Text
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -254,9 +255,11 @@ class ChatModal(ModalScreen):
             self._append_system("No diff preview callback is available.")
             return
         text = self._diff_fn().strip()
+        pane = self.query_one("#chat-diff", Static)
         if not text:
-            text = "No diff available yet. Edit and save first."
-        self.query_one("#chat-diff", Static).update(text)
+            pane.update("No diff available yet. Edit and save first.")
+        else:
+            pane.update(Syntax(text, "diff", theme="ansi_dark", word_wrap=False))
         if not self._split:
             self._append_system("Use /split (or Ctrl+D) to show diff beside chat.")
 
