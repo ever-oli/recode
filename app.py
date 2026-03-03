@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Codi — Spaced repetition for ML code.
+Recode — Spaced repetition for ML code.
 Drop .py scripts into PROBLEMS_DIR (default: ./problems).
 Run: uv run app.py
 """
@@ -66,7 +66,7 @@ class StudyScreen(Screen):
         # Use pid in temp file name to avoid collisions
         safe_pid       = self.pid.replace("/", "_").replace("\\", "_")
         ext            = problem.suffix  # preserve .py, .jl, .R etc.
-        self.work_file = _TMP / f"codi_{safe_pid}{ext}"
+        self.work_file = _TMP / f"recode_{safe_pid}{ext}"
         self.conn      = get_db(DB_PATH)
         self.attempts  = 0
         self.has_diff  = False
@@ -424,7 +424,7 @@ class MenuScreen(Screen):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 class MLStudyApp(App):
-    TITLE = "CODI"
+    TITLE = "RECODE"
     CSS = """
     Screen        { background: $background; color: $foreground; }
     Header        { background: $surface; color: $foreground; }

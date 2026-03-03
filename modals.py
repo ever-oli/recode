@@ -38,7 +38,7 @@ class AIModal(ModalScreen):
     def compose(self):
         yield Vertical(
             Label(f"[bold]{escape(self._title)}[/]", id="hint-title"),
-            MarkdownWidget("*asking Codi…*", id="hint-md"),
+            MarkdownWidget("*asking Recode...*", id="hint-md"),
             id="hint-box"
         )
 
@@ -95,12 +95,12 @@ class ChatModal(ModalScreen):
             with Horizontal(id="chat-main"):
                 yield RichLog(id="chat-log", markup=True, highlight=False, wrap=True, auto_scroll=True)
                 yield Static("", id="chat-diff", classes="hidden")
-            yield Input(placeholder="Ask Codi chat...", id="chat-input")
+            yield Input(placeholder="Ask Recode chat...", id="chat-input")
             yield Label("[dim]Enter send | /nudge /explain-gap /test-me /checklist | /hint /fix | /todo ... | /split[/]", id="chat-help")
 
     def on_mount(self) -> None:
         self._refresh_context()
-        self._append_system("Codi chat is ready. Ask about this problem, your diff, or the concept.")
+        self._append_system("Recode chat is ready. Ask about this problem, your diff, or the concept.")
         mistakes = self._mistakes_fn() if self._mistakes_fn else []
         if mistakes:
             self._append_system("Recent mistakes:")
@@ -187,7 +187,7 @@ class ChatModal(ModalScreen):
         if busy:
             inp.placeholder = "OpenCode is thinking…"
         else:
-            inp.placeholder = "Ask Codi chat…"
+            inp.placeholder = "Ask Recode chat..."
             inp.focus()
 
     def _run(self, text: str) -> None:
@@ -205,7 +205,7 @@ class ChatModal(ModalScreen):
         self.app.call_from_thread(self._display, answer, status)
 
     def _display(self, text: str, status: str) -> None:
-        self._append_message("codi", text)
+        self._append_message("recode", text)
         self._set_status(status)
         self._set_busy(False)
         self._refresh_context()

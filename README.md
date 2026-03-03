@@ -1,4 +1,4 @@
-# Codi
+# Recode
 
 A terminal-based spaced repetition tool for practicing any code from memory. Write implementations, compare against reference solutions with a side-by-side diff, get AI hints when stuck, and let the SM-2 algorithm schedule your reviews.
 
@@ -38,7 +38,7 @@ A terminal-based spaced repetition tool for practicing any code from memory. Wri
 - Python 3.10+
 - [`uv`](https://github.com/astral-sh/uv) (recommended) or `pip`
 - A Gemini or OpenRouter API key
-- [OpenCode CLI](https://opencode.ai/) on your PATH for in-app chat (auto-started by Codi)
+- [OpenCode CLI](https://opencode.ai/) on your PATH for in-app chat (auto-started by Recode)
 
 ---
 
@@ -47,8 +47,8 @@ A terminal-based spaced repetition tool for practicing any code from memory. Wri
 **1. Clone the repo**
 
 ```bash
-git clone https://github.com/yourusername/codi.git
-cd codi
+git clone https://github.com/yourusername/recode.git
+cd recode
 ```
 
 **2. Create a `.env` file** in the project root with your API key:
@@ -120,7 +120,7 @@ opencode serve --port 4096
 1. Select a problem from the list and press `Enter`
 2. Your editor opens — write the implementation from memory
 3. Save and close the editor
-4. Codi shows a side-by-side diff of your attempt vs. the reference
+4. Recode shows a side-by-side diff of your attempt vs. the reference
 5. Use **Hint** or **Suggest Fix** if you need AI assistance
 6. Rate your recall (Again / Hard / Good / Easy)
 7. SM-2 schedules the next review automatically
@@ -135,7 +135,7 @@ Problems are plain `.py` files. Drop any `.py` file into the `problems/` folder 
 A problem file contains two things:
 
 ```python
-# The reference solution Codi compares against
+# The reference solution Recode compares against
 SOLUTION = """
 import numpy as np
 
@@ -153,7 +153,7 @@ DESCRIPTION = "Implement the sigmoid function using NumPy."
 
 ## Themes
 
-Codi ships with 158 themes from [terminal.sexy](https://terminal.sexy). Switch themes live via `Ctrl+P` → search "theme".
+Recode ships with 158 themes from [terminal.sexy](https://terminal.sexy). Switch themes live via `Ctrl+P` -> search "theme".
 
 ---
 

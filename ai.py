@@ -82,7 +82,7 @@ def _openrouter(prompt: str) -> str:
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type":  "application/json",
-            "HTTP-Referer":  "https://github.com/ever-oli/codi",
+            "HTTP-Referer":  "https://github.com/ever-oli/recode",
         },
     )
     try:
@@ -223,14 +223,14 @@ def opencode_chat(problem_name: str, ref_code: str, user_code: str, message: str
         sid = session_id
         autostarted = False
         if not sid:
-            created, did_autostart = _opencode_request("POST", "/session", {"title": f"Codi chat: {problem_name}"})
+            created, did_autostart = _opencode_request("POST", "/session", {"title": f"Recode chat: {problem_name}"})
             autostarted = autostarted or did_autostart
             sid = created.get("id")
             if not sid:
                 return ("OpenCode server responded, but no session id was returned.", "", "offline")
 
             context = (
-                "You are Codi's in-app coding study chat. "
+                "You are Recode's in-app coding study chat. "
                 "Keep answers concise, practical, and focused on learning. "
                 "Do not reveal the full reference solution unless explicitly asked.\n\n"
                 f"Problem: {problem_name}\n\n"
@@ -263,7 +263,7 @@ def opencode_chat(problem_name: str, ref_code: str, user_code: str, message: str
         return (text, sid, status)
     except urllib.error.URLError:
         return (
-            "Could not reach OpenCode server. Codi tried to auto-start it, but could not. "
+            "Could not reach OpenCode server. Recode tried to auto-start it, but could not. "
             "Start it with `opencode serve --port 4096`, ensure `opencode` is on PATH, "
             "or set `OPENCODE_SERVER_URL`.",
             "",
