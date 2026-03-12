@@ -364,6 +364,56 @@ class RatingModal(ModalScreen[int]):
             self.dismiss(rating)
 
 
+class PaperGenerateModal(ModalScreen[dict | None]):
+    """Modal to generate problems from an arXiv paper."""
+    BINDINGS = [
+        Binding("escape", "dismiss", "Cancel"),
+        Binding("enter", "generate", "Generate"),
+    ]
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._generating = False
+
+    def compose(self):
+        with Vertical(id="hint-box"):
+            yield Label("[bold]Generate Problems from arXiv Paper[/bold]", id="hint-title")
+            yield Label("")
+            yield Label("Paste an arXiv URL or paper ID:")
+            yield Input(placeholder="https://arxiv.org/abs/2402.03300", id="paper-url")
+            yield Label("")
+            yield Label("[dim]Number of problems:[/dim]")
+            yield Input(placeholder="3", value="3", id="num-problems")
+            yield Label("")
+            yield Label("[dim]Language (python/julia):[/dim]")
+            yield Input(placeholder="python", value="python", id="language")
+            yield Label("")
+            yield MarkdownWidget("*Press Enter to generate, Esc to cancel*", id="paper-status")
+
+    def action_generate(self) -> None:
+        if self._generating:
+            return
+        
+        url_input = self.query_one("#paper-url", Input)
+        url = url_input.value.strip()
+        if not url:
+            self.query_one("#paper-status", MarkdownWidget).update("**Please enter a paper URL**")
+            return
+        
+        self._generating = True
+        num_problems = int(self.query_one("#num-problems", Input).value or "3")
+        language = self.query_one("#language", Input).value or "python"
+        
+        self.query_one("#paper-status", MarkdownWidget).update("*Fetching paper and generating problems...*")
+        
+        # Return config for the caller to handle generation
+        self.dismiss({
+            "url": url,
+            "num_problems": num_problems,
+            "language": language,
+        })
+
+
 class CollectionSelectModal(ModalScreen[Path]):
     """Modal to select a problem collection (folder)."""
     BINDINGS = [

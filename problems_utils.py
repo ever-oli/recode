@@ -15,6 +15,9 @@ from rich.text import Text
 # Supported problem file extensions
 CODE_EXTENSIONS = {".py", ".jl", ".R"}
 
+# Marimo notebook detection: files with .mo.py or .mo.jl etc. in stem
+MARIMO_MARKER = ".mo"
+
 
 def _is_code_file(p: Path) -> bool:
     return p.is_file() and p.suffix in CODE_EXTENSIONS
@@ -193,3 +196,47 @@ def max_rating_for(attempts: int) -> int:
     if attempts == 2: return 3
     if attempts == 3: return 2
     return 1
+
+
+def is_marimo_problem(path: Path) -> bool:
+    """Check if a problem file is a marimo notebook (.mo.py, .mo.jl, etc.)."""
+    return MARIMO_MARKER in path.stem
+
+
+def has_test_cases(problem_path: Path) -> bool:
+    """
+    Check if a problem has test cases defined.
+    Works for both marimo notebooks and regular .py files with TEST_CASES.
+    """
+    if is_marimo_problem(problem_path):
+        return True
+    
+    if problem_path.suffix != ".py":
+        return False
+    
+    try:
+        spec = importlib.util.spec_from_file_location("_prob_check", problem_path)
+        if spec and spec.loader:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
+            return hasattr(mod, "TEST_CASES")
+    except Exception:
+        pass
+    return False
+
+
+def problem_badges(path: Path) -> list[tuple[str, str]]:
+    """
+    Return display badges for a problem (icon, tooltip).
+    E.g., [("🧪", "has tests"), ("📓", "marimo notebook")]
+    """
+    badges = []
+    if is_marimo_problem(path):
+        badges.append(("📓", "marimo notebook"))
+    if has_test_cases(path):
+        badges.append(("🧪", "has tests"))
+    if path.suffix == ".jl":
+        badges.append(("🟣", "Julia"))
+    elif path.suffix == ".R":
+        badges.append(("🔵", "R"))
+    return badges
