@@ -17,6 +17,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, Markdown as MarkdownWidget, RichLog, Static
 
+from recode.runtime import get_runtime
+
 RATING_LABELS = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
 RATING_DESC   = {
     1: "forgot it completely",
@@ -412,6 +414,200 @@ class PaperGenerateModal(ModalScreen[dict | None]):
             "num_problems": num_problems,
             "language": language,
         })
+
+
+class ImportProblemModal(ModalScreen[dict | None]):
+    """Import problems from Exercism or LeetCode."""
+    BINDINGS = [
+        Binding("escape", "dismiss", "Cancel"),
+        Binding("enter", "import_selected", "Import"),
+    ]
+
+    SOURCES = [
+        ("exercism", "🟦 Exercism", "Free exercises with tests, 65+ languages"),
+        ("leetcode", "🟧 LeetCode", "Classic coding problems with test cases"),
+    ]
+
+    EXERCISM_TRACK = "python"
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._selected_source = "exercism"
+        self._items: list[dict] = []
+        self._loading = False
+
+    def compose(self):
+        with Vertical(id="hint-box"):
+            yield Label("[bold]Import Problems[/bold]", id="hint-title")
+            yield Label("")
+            yield Label("[dim]Source:[/dim]")
+            yield ListView(
+                *[ListItem(Label(f"{name}  [dim]{desc}[/dim]"), id=f"src-{src}") 
+                  for src, name, desc in self.SOURCES],
+                id="import-sources",
+            )
+            yield Label("")
+            yield Input(placeholder="Filter (e.g., easy, python, arrays)...", id="import-filter")
+            yield ListView(id="import-problems")
+            yield MarkdownWidget("", id="import-status")
+            yield Label("[dim]Select source → browse problems → Enter to import[/dim]", id="modal-skip")
+
+    def on_mount(self) -> None:
+        # Select first source by default
+        sources = self.query_one("#import-sources", ListView)
+        sources.index = 0
+        self._load_source("exercism")
+
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.item is None or event.item.id is None:
+            return
+        
+        item_id = event.item.id
+        
+        if item_id.startswith("src-"):
+            # Source selected
+            source = item_id[4:]
+            self._selected_source = source
+            self._load_source(source)
+        elif item_id.startswith("prob-"):
+            # Problem selected - import it
+            idx = int(item_id.split("-")[1])
+            if idx < len(self._items):
+                self._import_problem(self._items[idx])
+
+    def _load_source(self, source: str) -> None:
+        self._loading = True
+        self.query_one("#import-status", MarkdownWidget).update("*Loading...*")
+        self.query_one("#import-problems", ListView).clear()
+        
+        def _fetch():
+            items = []
+            try:
+                if source == "exercism":
+                    from exercism import list_exercises
+
+                    practice = list_exercises(self.EXERCISM_TRACK, "practice")
+                    concept = list_exercises(self.EXERCISM_TRACK, "concept")
+                    items = sorted(
+                        practice + concept,
+                        key=lambda item: (
+                            item.get("difficulty") != "easy",
+                            item.get("difficulty") == "hard",
+                            item.get("type") != "concept",
+                            item.get("name", ""),
+                        ),
+                    )
+                elif source == "leetcode":
+                    from leetcode import free_problems
+
+                    items = free_problems()
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.query_one("#import-status", MarkdownWidget).update,
+                    f"*Error: {e}*"
+                )
+                return
+            
+            self.app.call_from_thread(self._display_items, items)
+        
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _display_items(self, items: list[dict]) -> None:
+        self._items = items
+        self._loading = False
+        
+        list_view = self.query_one("#import-problems", ListView)
+        list_view.clear()
+        
+        if not items:
+            self.query_one("#import-status", MarkdownWidget).update("*No problems found*")
+            return
+        
+        for i, item in enumerate(items):
+            list_view.append(ListItem(Label(self._format_import_item(item)), id=f"prob-{i}"))
+        
+        self.query_one("#import-status", MarkdownWidget).update(f"*{len(items)} problems*")
+
+    def _format_import_item(self, item: dict) -> str:
+        name = item.get("name", item.get("title", item.get("slug", "unknown")))
+        diff = item.get("difficulty", "")
+        kind = item.get("type", "")
+        desc = item.get("description", "")[:60]
+
+        diff_icon = {"easy": "🟢", "medium": "🟡", "hard": "🔴"}.get(diff, "")
+        label = f"{diff_icon} {name}"
+        if kind:
+            label += f"  [dim]({escape(kind)})[/dim]"
+        if desc:
+            label += f"\n  [dim]{escape(desc)}[/dim]"
+        return label
+
+    def _import_problem(self, item: dict) -> None:
+        self.query_one("#import-status", MarkdownWidget).update("*Importing...*")
+        
+        def _do_import():
+            try:
+                output_dir = get_runtime().problems_dir / "imported"
+                
+                if self._selected_source == "exercism":
+                    from exercism import fetch_and_convert, write_exercism_problem
+                    slug = item.get("slug", "")
+                    problem = fetch_and_convert("python", slug)
+                    if problem:
+                        path = write_exercism_problem(problem, output_dir)
+                        self.app.call_from_thread(self._import_done, path, item)
+                    else:
+                        self.app.call_from_thread(
+                            self.query_one("#import-status", MarkdownWidget).update,
+                            "*Failed to fetch exercise*"
+                        )
+                
+                elif self._selected_source == "leetcode":
+                    from leetcode import fetch_and_convert, write_leetcode_problem
+                    slug = item.get("slug", "")
+                    problem = fetch_and_convert(slug)
+                    if problem:
+                        path = write_leetcode_problem(problem, output_dir)
+                        self.app.call_from_thread(self._import_done, path, item)
+                    else:
+                        self.app.call_from_thread(
+                            self.query_one("#import-status", MarkdownWidget).update,
+                            "*Failed to fetch problem (may be premium)*"
+                        )
+                
+            except Exception as e:
+                self.app.call_from_thread(
+                    self.query_one("#import-status", MarkdownWidget).update,
+                    f"*Error: {e}*"
+                )
+        
+        threading.Thread(target=_do_import, daemon=True).start()
+
+    def _import_done(self, path: Path, item: dict) -> None:
+        name = item.get("name", item.get("title", ""))
+        self.query_one("#import-status", MarkdownWidget).update(
+            f"**Imported: {name}**\n`{path}`"
+        )
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id == "import-filter":
+            # Filter the current list
+            query = event.value.strip().lower()
+            list_view = self.query_one("#import-problems", ListView)
+            list_view.clear()
+            
+            filtered = []
+            for i, item in enumerate(self._items):
+                name = item.get("name", item.get("title", "")).lower()
+                desc = item.get("description", "").lower()
+                diff = item.get("difficulty", "").lower()
+                kind = item.get("type", "").lower()
+                
+                if not query or query in name or query in desc or query in diff or query in kind:
+                    filtered.append((i, item))
+            
+            for orig_i, item in filtered:
+                list_view.append(ListItem(Label(self._format_import_item(item)), id=f"prob-{orig_i}"))
 
 
 class CollectionSelectModal(ModalScreen[Path]):

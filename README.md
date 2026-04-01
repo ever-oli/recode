@@ -15,7 +15,7 @@ A terminal-based spaced repetition tool for practicing any code from memory. Wri
 - **OpenCode chat modal** — conversational help in-context while you study a problem
 - **Agent-like chat tools** — presets (`/nudge`, `/test-me`), TODO capture, diff split view, and `/health`
 - **158 themes** — full terminal.sexy palette, switchable live from the command palette
-- **Extensible** — add any problem by dropping a `.py` file into `problems/`
+- **Extensible** — add any problem by dropping a `.py`, `.jl`, or `.R` file into your writable `problems_dir`
 
 ---
 
@@ -36,36 +36,64 @@ A terminal-based spaced repetition tool for practicing any code from memory. Wri
 ## Requirements
 
 - Python 3.10+
-- [`uv`](https://github.com/astral-sh/uv) (recommended) or `pip`
+- [`uv`](https://github.com/astral-sh/uv) (recommended), `pipx`, or `pip`
 - A Gemini or OpenRouter API key
 - [OpenCode CLI](https://opencode.ai/) on your PATH for in-app chat (auto-started by Recode)
 
 ---
 
-## Setup
+## Install
 
-**1. Clone the repo**
+### Homebrew
 
 ```bash
-git clone https://github.com/yourusername/recode.git
-cd recode
+brew tap ever-oli/homebrew-tap
+brew install ever-oli/homebrew-tap/recode
 ```
 
-**2. Create a `.env` file** in the project root with your API key:
+### PyPI
+
+```bash
+uv tool install recode-cli
+# or
+pipx install recode-cli
+```
+
+### Local dev
+
+```bash
+git clone https://github.com/ever-oli/recode.git
+cd recode
+uv sync
+uv run python -m recode
+```
+
+---
+
+## Configuration
+
+Recode reads environment variables from your shell, a local `.env`, or `~/.config/recode/.env`.
+Use `recode --paths` to print the exact runtime directories for your machine.
+
+On first run, Recode seeds its bundled problem set into your writable `problems_dir` so generated and imported problems live beside the defaults instead of inside the installed package.
+
+Example `.env`:
 
 ```env
-# Option A — Google Gemini (default)
+# Option A — Google Gemini
 GEMINI_API_KEY=your_gemini_api_key_here
+AI_PROVIDER=gemini
 
 # Option B — OpenRouter
 OPENROUTER_API_KEY=your_openrouter_api_key_here
 AI_PROVIDER=openrouter
 
-# Optional: override the default editor (default: hx / Helix)
+# Optional: override the editor (default: hx)
 EDITOR=nvim
 
-# Optional: override the problems directory
+# Optional: override runtime locations
 # PROBLEMS_DIR=/path/to/your/problems
+# DB_PATH=/path/to/recode.db
 
 # Optional: OpenCode server URL for in-app chat modal
 # OPENCODE_SERVER_URL=http://127.0.0.1:4096
@@ -74,22 +102,25 @@ EDITOR=nvim
 # OPENCODE_AUTOSTART=0
 ```
 
-**3. Install dependencies and run**
+---
 
-With `uv` (recommended):
+## Run
 
-```bash
-uv run app.py
-```
-
-With `pip`:
+Once installed:
 
 ```bash
-pip install -r requirements.txt
-python app.py
+recode
 ```
 
-**4. Chat modal behavior (OpenCode)**
+Useful non-interactive commands:
+
+```bash
+recode --version
+recode --paths
+recode --doctor
+```
+
+### Chat modal behavior (OpenCode)
 
 By default, pressing `c` in a problem will auto-start a local OpenCode server if it is not already running.
 The chat modal shows a live status line (`connected`, `auto-started OpenCode`, or `offline`).
@@ -109,16 +140,30 @@ opencode serve --port 4096
 
 | Key | Action |
 |-----|--------|
-| `Enter` | Open the selected problem in your editor, then review |
-| `c` | Open in-problem chat modal (OpenCode-backed) |
+| `Enter` | Open the selected problem |
+| `/` | Focus search |
+| `c` | Change collection on the main menu |
+| `g` | Generate problems from an arXiv paper |
+| `i` | Import from Exercism or LeetCode |
 | `r` | Refresh the problem list |
-| `Ctrl+P` | Open the command palette (theme switcher, etc.) |
 | `q` / `Ctrl+C` | Quit |
+
+Inside a problem:
+
+| Key | Action |
+|-----|--------|
+| `e` | Open the editor |
+| `s` | Submit and review |
+| `h` | Ask for a hint |
+| `f` | Ask for a suggested fix |
+| `c` | Open the in-problem chat modal |
+| `x` | Explain the solution or gap |
+| `q` | Return to the menu |
 
 ### Workflow
 
 1. Select a problem from the list and press `Enter`
-2. Your editor opens — write the implementation from memory
+2. Press `e` to open your editor and write the implementation from memory
 3. Save and close the editor
 4. Recode shows a side-by-side diff of your attempt vs. the reference
 5. Use **Hint** or **Suggest Fix** if you need AI assistance
@@ -129,8 +174,8 @@ opencode serve --port 4096
 
 ## Adding Problems
 
-Problems are plain `.py` files. Drop any `.py` file into the `problems/` folder and it will appear in the list on the next refresh (`r`).
-`TensorPoly` is now vendored as a normal folder inside `problems/` (not a submodule), and can be selected with collection switch (`c`) in the menu.
+Problems are plain `.py`, `.jl`, or `.R` files. Drop them into the writable `problems_dir` from `recode --paths` and they will appear in the list on the next refresh (`r`).
+`TensorPoly` ships as a bundled collection and is copied into your writable problems directory on first run. The built-in importer currently supports Exercism Python and free LeetCode problems.
 
 A problem file contains two things:
 
@@ -148,12 +193,6 @@ DESCRIPTION = "Implement the sigmoid function using NumPy."
 ```
 
 36 curated ML problems are included covering ResNet, Transformers, GANs, U-Net, ViT, and more.
-
----
-
-## Themes
-
-Recode ships with 158 themes from [terminal.sexy](https://terminal.sexy). Switch themes live via `Ctrl+P` -> search "theme".
 
 ---
 

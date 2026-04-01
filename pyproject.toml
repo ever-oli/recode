@@ -1,10 +1,95 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
-name = "recode"
+name = "recode-cli"
 version = "0.1.0"
-description = "Add your description here"
+description = "Terminal spaced repetition for coding problems and reference solutions"
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = [
-    "pylatexenc>=2.10",
-    "textual>=8.0.0",
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Ever" }
 ]
+keywords = [
+  "cli",
+  "coding",
+  "spaced-repetition",
+  "textual",
+  "tui"
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Environment :: Console",
+  "Environment :: Console :: Curses",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Education",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Terminals"
+]
+dependencies = [
+  "google-genai>=0.8.0",
+  "marimo>=0.11.0",
+  "platformdirs>=4.2.0",
+  "pylatexenc>=2.10",
+  "python-dotenv>=1.0.0",
+  "textual>=8.0.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ever-oli/recode"
+Repository = "https://github.com/ever-oli/recode"
+Issues = "https://github.com/ever-oli/recode/issues"
+
+[project.scripts]
+recode = "recode.cli:main"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.5",
+]
+
+[tool.setuptools]
+include-package-data = true
+packages = [
+  "recode",
+  "recode.problems",
+  "recode.problems.TensorPoly",
+  "recode.problems.TensorPoly.Julia",
+  "recode.problems.TensorPoly.MLX",
+  "recode.problems.TensorPoly.R",
+  "recode.problems.TensorPoly.numpy",
+  "recode.problems.TensorPoly.pytorch",
+]
+py-modules = [
+  "ai",
+  "app",
+  "db",
+  "exercism",
+  "leetcode",
+  "modals",
+  "paper_generator",
+  "problems_utils",
+  "test_runner",
+  "themes",
+]
+
+[tool.setuptools.package-data]
+recode = [
+  "problems/**/*.R",
+  "problems/**/*.jl",
+  "problems/**/*.md",
+  "problems/**/*.py",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]

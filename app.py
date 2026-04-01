@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Recode — Spaced repetition for ML code.
-Drop .py scripts into PROBLEMS_DIR (default: ./problems).
-Run: uv run app.py
+Drop .py scripts into the writable problems directory shown by `recode --paths`.
+Run: uv run python -m recode
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from dotenv import load_dotenv
 from rich.markup import escape
 from rich.syntax import Syntax
 from textual.app import App, ComposeResult
@@ -23,7 +22,7 @@ from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
 from ai import get_explain, get_hint, get_suggest_fix, opencode_chat, opencode_chat_health
 from db import get_db, get_row, get_streak, log_mistake, recent_mistakes, reset_progress, sm2_update
-from modals import AIModal, ChatModal, ConfirmModal, RatingModal, CollectionSelectModal, PaperGenerateModal
+from modals import AIModal, ChatModal, ConfirmModal, RatingModal, CollectionSelectModal, PaperGenerateModal, ImportProblemModal
 from problems_utils import (
     build_side_by_side,
     get_problem_id,
@@ -39,16 +38,25 @@ from problems_utils import (
 from test_runner import run_tests, format_test_results
 from paper_generator import generate_problems, parse_arxiv_url, fetch_paper, extract_sections
 from themes import TERMINAL_SEXY_THEMES
-
-load_dotenv()
+from recode.runtime import RuntimePaths, get_runtime, prepare_runtime
 
 # ── Config ────────────────────────────────────────────────────────────────────
-PROBLEMS_DIR = Path(os.environ.get("PROBLEMS_DIR", "./problems"))
-DB_PATH      = Path(os.environ.get("DB_PATH",      "study_data.db"))
-EDITOR       = os.environ.get("EDITOR", "hx")
+RUNTIME      = get_runtime()
+PROBLEMS_DIR = RUNTIME.problems_dir
+DB_PATH      = RUNTIME.db_path
+EDITOR       = RUNTIME.editor
 _TMP         = Path(tempfile.gettempdir())
 
 RATING_LABELS = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
+
+
+def configure_runtime(runtime: RuntimePaths | None = None) -> RuntimePaths:
+    global RUNTIME, PROBLEMS_DIR, DB_PATH, EDITOR
+    RUNTIME = runtime or prepare_runtime()
+    PROBLEMS_DIR = RUNTIME.problems_dir
+    DB_PATH = RUNTIME.db_path
+    EDITOR = RUNTIME.editor
+    return RUNTIME
 
 
 # ── Study Screen ──────────────────────────────────────────────────────────────
@@ -304,6 +312,7 @@ class MenuScreen(Screen):
         Binding("/",      "focus_search", "Search"),
         Binding("c",      "change_collection", "Collection"),
         Binding("g",      "generate_from_paper", "Generate"),
+        Binding("i",      "import_problems", "Import"),
         Binding("escape", "clear_search", "Clear",  show=False),
         Binding("d",      "reset_row",    "Reset",  show=False),
         Binding("q",      "quit_app",     "Quit"),
@@ -449,6 +458,13 @@ class MenuScreen(Screen):
                 )
         
         self.app.call_from_thread(_done)
+
+    def action_import_problems(self) -> None:
+        self.app.push_screen(ImportProblemModal(), self._on_import_result)
+
+    def _on_import_result(self, result: dict | None) -> None:
+        if result:
+            self._refresh()
 
     def action_clear_search(self) -> None:
         inp = self.query_one("#search-input", Input)
@@ -609,5 +625,17 @@ class MLStudyApp(App):
         self.push_screen(MenuScreen())
 
 
-if __name__ == "__main__":
+def main(
+    *,
+    problems_dir: str | Path | None = None,
+    db_path: str | Path | None = None,
+    editor: str | None = None,
+) -> None:
+    configure_runtime(
+        prepare_runtime(problems_dir=problems_dir, db_path=db_path, editor=editor)
+    )
     MLStudyApp().run()
+
+
+if __name__ == "__main__":
+    main()

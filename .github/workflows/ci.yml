@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+jobs:
+  package-smoke:
+    runs-on: ubuntu-latest
+    env:
+      RECODE_HOME: ${{ runner.temp }}/recode-home
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Sync dependencies
+        run: uv sync --extra dev
+
+      - name: Smoke test CLI
+        run: |
+          uv run python -m recode --version
+          uv run python -m recode --paths
+          uv run python -m recode --doctor
+
+      - name: Build distributions
+        run: uv build
