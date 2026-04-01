@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import difflib
 import importlib.util
+import re
 import sqlite3
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,90 @@ from rich.text import Text
 
 # Supported problem file extensions
 CODE_EXTENSIONS = {".py", ".jl", ".R"}
+
+# Marimo notebook detection: files with .mo.py or .mo.jl etc. in stem
+MARIMO_MARKER = ".mo"
+
+
+def parse_frontmatter(text: str) -> tuple[dict, str]:
+    """
+    Parse YAML-like frontmatter from the start of a file.
+    
+    Format:
+        # ---
+        # key: value
+        # tags: [a, b, c]
+        # ---
+        <rest of file>
+    
+    Returns (metadata_dict, remaining_text).
+    Falls back to ({}, text) if no frontmatter found.
+    """
+    lines = text.splitlines()
+    
+    # Check for frontmatter start (# --- or ---)
+    if not lines:
+        return {}, text
+    
+    first = lines[0].strip()
+    if first not in ("# ---", "---"):
+        return {}, text
+    
+    # Determine comment style
+    is_commented = first.startswith("#")
+    delimiter = "# ---" if is_commented else "---"
+    
+    # Find the closing ---
+    end_idx = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == delimiter:
+            end_idx = i
+            break
+    
+    if end_idx is None:
+        return {}, text
+    
+    # Parse metadata lines
+    meta = {}
+    for line in lines[1:end_idx]:
+        stripped = line.strip()
+        if is_commented:
+            stripped = re.sub(r'^#\s*', '', stripped)
+        
+        if not stripped or ':' not in stripped:
+            continue
+        
+        key, _, value = stripped.partition(':')
+        key = key.strip()
+        value = value.strip()
+        
+        # Parse lists: [a, b, c]
+        if value.startswith('[') and value.endswith(']'):
+            items = [v.strip().strip('"').strip("'") for v in value[1:-1].split(',')]
+            meta[key] = [v for v in items if v]
+        # Parse quoted strings
+        elif value.startswith('"') and value.endswith('"'):
+            meta[key] = value[1:-1]
+        elif value.startswith("'") and value.endswith("'"):
+            meta[key] = value[1:-1]
+        # Parse booleans
+        elif value.lower() in ('true', 'yes'):
+            meta[key] = True
+        elif value.lower() in ('false', 'no'):
+            meta[key] = False
+        # Parse numbers
+        else:
+            try:
+                if '.' in value:
+                    meta[key] = float(value)
+                else:
+                    meta[key] = int(value)
+            except ValueError:
+                meta[key] = value
+    
+    # Remaining text after frontmatter
+    remaining = '\n'.join(lines[end_idx + 1:])
+    return meta, remaining
 
 
 def _is_code_file(p: Path) -> bool:
@@ -71,27 +156,66 @@ def get_problem_id(problem_path: Path, root: Path) -> str:
 
 
 def load_problem_meta(path: Path) -> dict:
-    """Load SOLUTION and DESCRIPTION from a problem file.
-
-    For .py files, tries to import and read SOLUTION/DESCRIPTION variables.
-    For other file types (.jl, .R, etc.), reads raw text as the solution.
+    """Load metadata from a problem file.
+    
+    Supports:
+    - YAML frontmatter (# --- ... # ---) with description, difficulty, tags, source, etc.
+    - Legacy SOLUTION/DESCRIPTION variables in .py files
+    - Raw text for non-Python files
+    
+    Returns dict with keys: solution, description, difficulty, tags, source, prerequisites, 
+    and any other frontmatter fields.
     """
-    # Non-Python files: just read raw text
+    raw_text = path.read_text()
+    
+    # Parse frontmatter
+    meta, remaining = parse_frontmatter(raw_text)
+    
+    # Non-Python files: use frontmatter + raw text
     if path.suffix != ".py":
-        return {"solution": path.read_text(), "description": ""}
-
+        result = {
+            "solution": remaining.strip() if remaining.strip() else raw_text,
+            "description": meta.get("description", ""),
+            "difficulty": meta.get("difficulty", ""),
+            "tags": meta.get("tags", []),
+            "source": meta.get("source", ""),
+            "prerequisites": meta.get("prerequisites", []),
+        }
+        # Include any extra frontmatter fields
+        for k, v in meta.items():
+            if k not in result:
+                result[k] = v
+        return result
+    
+    # Python files: try to import for SOLUTION/DESCRIPTION (legacy)
+    # Use remaining text (after frontmatter) for import
     spec = importlib.util.spec_from_file_location("_prob", path)
     if spec is None or spec.loader is None:
-        return {"solution": path.read_text(), "description": ""}
+        return {"solution": raw_text, "description": meta.get("description", "")}
+    
     mod = importlib.util.module_from_spec(spec)
     try:
         spec.loader.exec_module(mod)  # type: ignore[union-attr]
     except Exception:
         pass
-    return {
-        "solution":    getattr(mod, "SOLUTION",    path.read_text()),
-        "description": getattr(mod, "DESCRIPTION", ""),
+    
+    # Frontmatter takes precedence, fallback to module globals, then raw text
+    solution = getattr(mod, "SOLUTION", remaining.strip() or raw_text)
+    description = meta.get("description", "") or getattr(mod, "DESCRIPTION", "")
+    
+    result = {
+        "solution": solution,
+        "description": description,
+        "difficulty": meta.get("difficulty", getattr(mod, "DIFFICULTY", "")),
+        "tags": meta.get("tags", getattr(mod, "TAGS", [])),
+        "source": meta.get("source", getattr(mod, "SOURCE", "")),
+        "prerequisites": meta.get("prerequisites", []),
     }
+    # Include any extra frontmatter fields
+    for k, v in meta.items():
+        if k not in result:
+            result[k] = v
+    return result
 
 
 def build_side_by_side(ref_code: str, user_code: str) -> Table:
@@ -193,3 +317,66 @@ def max_rating_for(attempts: int) -> int:
     if attempts == 2: return 3
     if attempts == 3: return 2
     return 1
+
+
+def is_marimo_problem(path: Path) -> bool:
+    """Check if a problem file is a marimo notebook (.mo.py, .mo.jl, etc.)."""
+    return MARIMO_MARKER in path.stem
+
+
+def has_test_cases(problem_path: Path) -> bool:
+    """
+    Check if a problem has test cases defined.
+    Works for both marimo notebooks and regular .py files with TEST_CASES.
+    """
+    if is_marimo_problem(problem_path):
+        return True
+    
+    if problem_path.suffix != ".py":
+        return False
+    
+    try:
+        spec = importlib.util.spec_from_file_location("_prob_check", problem_path)
+        if spec and spec.loader:
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)  # type: ignore[union-attr]
+            return hasattr(mod, "TEST_CASES")
+    except Exception:
+        pass
+    return False
+
+
+def problem_badges(path: Path) -> list[tuple[str, str]]:
+    """
+    Return display badges for a problem (icon, tooltip).
+    E.g., [("🧪", "has tests"), ("📓", "marimo notebook"), ("⭐", "medium")]
+    """
+    badges = []
+    if is_marimo_problem(path):
+        badges.append(("📓", "marimo notebook"))
+    if has_test_cases(path):
+        badges.append(("🧪", "has tests"))
+    if path.suffix == ".jl":
+        badges.append(("🟣", "Julia"))
+    elif path.suffix == ".R":
+        badges.append(("🔵", "R"))
+    
+    # Add difficulty badge from metadata
+    meta = load_problem_meta(path)
+    difficulty = meta.get("difficulty", "")
+    if difficulty:
+        diff_icons = {"easy": ("🟢", "easy"), "medium": ("🟡", "medium"), "hard": ("🔴", "hard")}
+        if difficulty.lower() in diff_icons:
+            badges.append(diff_icons[difficulty.lower()])
+    
+    # Add source badge
+    source = meta.get("source", "")
+    if source:
+        if source.startswith("leetcode"):
+            badges.append(("🟧", "LeetCode"))
+        elif source.startswith("exercism"):
+            badges.append(("🟦", "Exercism"))
+        elif source.startswith("hf://") or "huggingface" in source:
+            badges.append(("🤗", "HuggingFace"))
+    
+    return badges

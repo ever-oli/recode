@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Recode — Spaced repetition for ML code.
-Drop .py scripts into PROBLEMS_DIR (default: ./problems).
-Run: uv run app.py
+Drop .py scripts into the writable problems directory shown by `recode --paths`.
+Run: uv run python -m recode
 """
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-from dotenv import load_dotenv
 from rich.markup import escape
 from rich.syntax import Syntax
 from textual.app import App, ComposeResult
@@ -23,27 +22,41 @@ from textual.widgets import DataTable, Footer, Header, Input, RichLog, Static
 
 from ai import get_explain, get_hint, get_suggest_fix, opencode_chat, opencode_chat_health
 from db import get_db, get_row, get_streak, log_mistake, recent_mistakes, reset_progress, sm2_update
-from modals import AIModal, ChatModal, ConfirmModal, RatingModal, CollectionSelectModal
+from modals import AIModal, ChatModal, ConfirmModal, RatingModal, CollectionSelectModal, PaperGenerateModal, ImportProblemModal
 from problems_utils import (
     build_side_by_side,
     get_problem_id,
+    has_test_cases,
+    is_marimo_problem,
     load_problem_meta,
     max_rating_for,
+    problem_badges,
     scan_problems,
     scan_collections,
     status_label,
 )
+from test_runner import run_tests, format_test_results
+from paper_generator import generate_problems, parse_arxiv_url, fetch_paper, extract_sections
 from themes import TERMINAL_SEXY_THEMES
-
-load_dotenv()
+from recode.runtime import RuntimePaths, get_runtime, prepare_runtime
 
 # ── Config ────────────────────────────────────────────────────────────────────
-PROBLEMS_DIR = Path(os.environ.get("PROBLEMS_DIR", "./problems"))
-DB_PATH      = Path(os.environ.get("DB_PATH",      "study_data.db"))
-EDITOR       = os.environ.get("EDITOR", "hx")
+RUNTIME      = get_runtime()
+PROBLEMS_DIR = RUNTIME.problems_dir
+DB_PATH      = RUNTIME.db_path
+EDITOR       = RUNTIME.editor
 _TMP         = Path(tempfile.gettempdir())
 
 RATING_LABELS = {1: "Again", 2: "Hard", 3: "Good", 4: "Easy"}
+
+
+def configure_runtime(runtime: RuntimePaths | None = None) -> RuntimePaths:
+    global RUNTIME, PROBLEMS_DIR, DB_PATH, EDITOR
+    RUNTIME = runtime or prepare_runtime()
+    PROBLEMS_DIR = RUNTIME.problems_dir
+    DB_PATH = RUNTIME.db_path
+    EDITOR = RUNTIME.editor
+    return RUNTIME
 
 
 # ── Study Screen ──────────────────────────────────────────────────────────────
@@ -81,8 +94,10 @@ class StudyScreen(Screen):
     def on_mount(self) -> None:
         desc = self.meta["description"]
         desc_part = f"  [dim italic]{escape(desc)}[/]" if desc else ""
+        badges = problem_badges(self.problem)
+        badge_str = " " + " ".join(f"[{b[1]}]" for b in badges) if badges else ""
         self.query_one("#problem-bar", Static).update(
-            f"[bold white]{escape(self.problem.name)}[/]{desc_part}"
+            f"[bold white]{escape(self.problem.name)}[/]{badge_str}{desc_part}"
         )
         log = self.query_one("#diff-pane", RichLog)
         row = get_row(self.conn, self.pid)
@@ -208,6 +223,22 @@ class StudyScreen(Screen):
             if small_summary:
                 log_mistake(self.conn, self.pid, small_summary)
 
+        # Run tests if available
+        if has_test_cases(self.problem) and user_code.strip():
+            log.write("\n[dim]── running tests ──[/]")
+            try:
+                test_results = run_tests(self.problem, user_code)
+                if test_results:
+                    log.write(format_test_results(test_results))
+                    # Log test failures as mistakes
+                    for tr in test_results:
+                        if not tr.passed:
+                            log_mistake(self.conn, self.pid, f"test failed: {tr.name} — {tr.detail}")
+                else:
+                    log.write("[dim]no tests ran[/]")
+            except Exception as e:
+                log.write(f"[red]test runner error: {e}[/]")
+
         max_r = max_rating_for(self.attempts)
         if self.attempts >= 4:
             log.write(f"\n[bold red]attempt {self.attempts} — press  s  to record (forced: Again)[/]")
@@ -280,6 +311,8 @@ class MenuScreen(Screen):
         Binding("r",      "refresh",      "Refresh"),
         Binding("/",      "focus_search", "Search"),
         Binding("c",      "change_collection", "Collection"),
+        Binding("g",      "generate_from_paper", "Generate"),
+        Binding("i",      "import_problems", "Import"),
         Binding("escape", "clear_search", "Clear",  show=False),
         Binding("d",      "reset_row",    "Reset",  show=False),
         Binding("q",      "quit_app",     "Quit"),
@@ -302,7 +335,7 @@ class MenuScreen(Screen):
 
     def on_mount(self) -> None:
         t = self.query_one(DataTable)
-        t.add_columns("Status", "Problem", "Reps", "Interval", "Next review")
+        t.add_columns("Status", " ", "Problem", "Reps", "Interval", "Next review")
         self._refresh()
 
     def _refresh(self) -> None:
@@ -357,8 +390,10 @@ class MenuScreen(Screen):
             if q and q not in p.name.lower():
                 continue
             self._visible_paths.append(p)
+            badges = problem_badges(p)
+            badge_str = "".join(b[0] for b in badges) if badges else ""
             t.add_row(
-                f"[{color}]{label}[/]", p.name, reps, interval, nxt,
+                f"[{color}]{label}[/]", badge_str, p.name, reps, interval, nxt,
                 key=str(p),
             )
 
@@ -375,6 +410,60 @@ class MenuScreen(Screen):
     def _on_collection_selected(self, collection: Path | None) -> None:
         if collection:
             self.current_collection = collection
+            self._refresh()
+
+    def action_generate_from_paper(self) -> None:
+        self.app.push_screen(PaperGenerateModal(), self._on_paper_config)
+
+    def _on_paper_config(self, config: dict | None) -> None:
+        if not config:
+            return
+        
+        # Show generating status
+        stats = self.query_one("#stats-bar", Static)
+        original_text = str(stats.renderable)
+        stats.update("[bold yellow]  Generating problems from paper...[/]")
+        
+        # Run generation in a thread to not block UI
+        import threading
+        threading.Thread(
+            target=self._run_generation,
+            args=(config,),
+            daemon=True,
+        ).start()
+
+    def _run_generation(self, config: dict) -> None:
+        from paper_generator import generate_problems
+        
+        output_dir = PROBLEMS_DIR / "generated"
+        paper, files = generate_problems(
+            arxiv_url=config["url"],
+            output_dir=output_dir,
+            num_problems=config.get("num_problems", 3),
+            language=config.get("language", "python"),
+            use_marimo=True,
+        )
+        
+        def _done():
+            if paper and files:
+                self.query_one("#stats-bar", Static).update(
+                    f"[bold green]  Generated {len(files)} problems from: {paper.title}[/]"
+                )
+                # Switch to generated collection
+                self.current_collection = output_dir
+                self._refresh()
+            else:
+                self.query_one("#stats-bar", Static).update(
+                    "[bold red]  Failed to generate problems. Check the paper URL.[/]"
+                )
+        
+        self.app.call_from_thread(_done)
+
+    def action_import_problems(self) -> None:
+        self.app.push_screen(ImportProblemModal(), self._on_import_result)
+
+    def _on_import_result(self, result: dict | None) -> None:
+        if result:
             self._refresh()
 
     def action_clear_search(self) -> None:
@@ -536,5 +625,17 @@ class MLStudyApp(App):
         self.push_screen(MenuScreen())
 
 
-if __name__ == "__main__":
+def main(
+    *,
+    problems_dir: str | Path | None = None,
+    db_path: str | Path | None = None,
+    editor: str | None = None,
+) -> None:
+    configure_runtime(
+        prepare_runtime(problems_dir=problems_dir, db_path=db_path, editor=editor)
+    )
     MLStudyApp().run()
+
+
+if __name__ == "__main__":
+    main()
